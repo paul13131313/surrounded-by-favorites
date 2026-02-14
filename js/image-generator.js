@@ -15,7 +15,7 @@ const ImageGenerator = (() => {
   function loadImage(url) {
     return new Promise((resolve, reject) => {
       const img = new Image();
-      img.crossOrigin = 'anonymous';
+      // crossOriginを設定しない（CORSエラー回避）
       const timer = setTimeout(() => {
         img.src = '';
         reject(new Error('timeout'));
@@ -35,6 +35,7 @@ const ImageGenerator = (() => {
   /**
    * 四隅からのflood fill方式で白背景を透過にする
    * イラスト内部のパステル色は保護される
+   * tainted canvasの場合はSecurityErrorを投げる
    */
   function removeWhiteBackground(img) {
     const canvas = document.createElement('canvas');
@@ -44,6 +45,7 @@ const ImageGenerator = (() => {
     const ctx = canvas.getContext('2d');
     ctx.drawImage(img, 0, 0, size, size);
 
+    // getImageDataはtainted canvasでSecurityErrorを投げる
     const imageData = ctx.getImageData(0, 0, size, size);
     const data = imageData.data;
     const w = size, h = size;
@@ -61,14 +63,17 @@ const ImageGenerator = (() => {
       return brightness > 220 && saturation < 50;
     }
 
-    // BFS flood fill（四隅から）
+    // BFS flood fill（インデックスベース）
     function floodFill(startX, startY) {
-      const queue = [[startX, startY]];
       const startIdx = (startY * w + startX) * 4;
       if (!isBgLike(startIdx)) return;
 
-      while (queue.length > 0) {
-        const [cx, cy] = queue.shift();
+      const queue = [startX, startY];
+      let head = 0;
+
+      while (head < queue.length) {
+        const cx = queue[head++];
+        const cy = queue[head++];
         const pos = cy * w + cx;
         if (visited[pos]) continue;
         visited[pos] = 1;
@@ -79,10 +84,10 @@ const ImageGenerator = (() => {
         toRemove[pos] = 1;
 
         // 4方向
-        if (cx > 0) queue.push([cx - 1, cy]);
-        if (cx < w - 1) queue.push([cx + 1, cy]);
-        if (cy > 0) queue.push([cx, cy - 1]);
-        if (cy < h - 1) queue.push([cx, cy + 1]);
+        if (cx > 0) { queue.push(cx - 1, cy); }
+        if (cx < w - 1) { queue.push(cx + 1, cy); }
+        if (cy > 0) { queue.push(cx, cy - 1); }
+        if (cy < h - 1) { queue.push(cx, cy + 1); }
       }
     }
 
@@ -137,6 +142,22 @@ const ImageGenerator = (() => {
     });
   }
 
+  /**
+   * 画像をリサイズしてImage要素として返す（背景除去なし用）
+   */
+  function resizeToImage(img, size = 512) {
+    const canvas = document.createElement('canvas');
+    canvas.width = size;
+    canvas.height = size;
+    const ctx = canvas.getContext('2d');
+    ctx.drawImage(img, 0, 0, size, size);
+    const resultImg = new Image();
+    resultImg.src = canvas.toDataURL('image/png');
+    return new Promise(resolve => {
+      resultImg.onload = () => resolve(resultImg);
+    });
+  }
+
   function createFallbackImage(item) {
     const canvas = document.createElement('canvas');
     canvas.width = 512;
@@ -175,18 +196,35 @@ const ImageGenerator = (() => {
     try {
       const url = buildUrl(item);
       const img = await loadImage(url);
-      const cut = await removeWhiteBackground(img);
-      if (onProgress) onProgress('done');
-      return cut;
-    } catch (e) {
+
+      // 背景除去を試みる（tainted canvasならSecurityError）
       try {
-        // リトライ
-        const url2 = buildUrl(item);
-        const img = await loadImage(url2);
         const cut = await removeWhiteBackground(img);
         if (onProgress) onProgress('done');
         return cut;
+      } catch (secErr) {
+        // SecurityError: tainted canvas → 背景除去なしでリサイズして返す
+        console.log(`[ImageGenerator] Canvas tainted for "${item}", using without bg removal`);
+        const resized = await resizeToImage(img);
+        if (onProgress) onProgress('done');
+        return resized;
+      }
+    } catch (e) {
+      // リトライ
+      try {
+        const url2 = buildUrl(item);
+        const img = await loadImage(url2);
+        try {
+          const cut = await removeWhiteBackground(img);
+          if (onProgress) onProgress('done');
+          return cut;
+        } catch (secErr) {
+          const resized = await resizeToImage(img);
+          if (onProgress) onProgress('done');
+          return resized;
+        }
       } catch (e2) {
+        console.error(`[ImageGenerator] Failed for "${item}":`, e2);
         if (onProgress) onProgress('error');
         return createFallbackImage(item);
       }
