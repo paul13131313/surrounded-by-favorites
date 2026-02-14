@@ -2,10 +2,14 @@
    メインアプリロジック・状態管理
    ======================================== */
 
+import PersonSegmenter from './person-segmenter.js';
+import ImageGenerator from './image-generator.js';
+import CollageComposer from './collage-composer.js';
+import Share from './share.js';
+
 (() => {
   // 状態
-  let faceData = null;       // { canvas, crop }
-  let faceCanvas = null;     // 切り抜き済み顔Canvas
+  let personCanvas = null;   // セグメンテーション済みの人物Canvas（背景透明）
   const favorites = new Array(8).fill('');
 
   // DOM
@@ -63,35 +67,34 @@
     const reader = new FileReader();
     reader.onload = (e) => {
       const img = new Image();
-      img.onload = () => detectFace(img);
+      img.onload = () => detectPerson(img);
       img.src = e.target.result;
     };
     reader.readAsDataURL(file);
   }
 
-  async function detectFace(img) {
+  async function detectPerson(img) {
     facePreview.hidden = false;
     btnUseFace.hidden = true;
     btnRetake.hidden = true;
     faceMessage.className = 'face-message';
-    faceMessage.textContent = 'お顔を探しています...';
+    faceMessage.textContent = '人物を検出しています...';
 
     try {
-      const result = await FaceDetector.detect(img);
+      const result = await PersonSegmenter.detect(img);
       if (!result) {
-        showFaceError('お顔が見つかりませんでした。正面を向いた明るい写真でお試しください');
+        showFaceError('人物が見つかりませんでした。人物がはっきり写った写真をお使いください');
         return;
       }
-      faceData = {
-        canvas: result.canvas,
-        crop: { x: result.x, y: result.y, width: result.width, height: result.height }
-      };
-      FaceDetector.drawCircularCrop(faceCanvasEl, result.canvas, faceData.crop);
-      faceMessage.textContent = 'すてきな笑顔ですね!';
+
+      personCanvas = result.croppedCanvas;
+      PersonSegmenter.drawPreview(faceCanvasEl, personCanvas);
+      faceMessage.textContent = 'きれいに切り抜けました!';
       btnUseFace.hidden = false;
       btnRetake.hidden = false;
     } catch (e) {
-      showFaceError('顔検出中にエラーが発生しました。別の写真をお試しください');
+      console.error('[App] Detection error:', e);
+      showFaceError('画像処理中にエラーが発生しました。ページを再読み込みしてお試しください');
     }
   }
 
@@ -109,14 +112,12 @@
   }
 
   btnUseFace.addEventListener('click', () => {
-    faceCanvas = FaceDetector.getCroppedFaceCanvas(faceData.canvas, faceData.crop, 512);
     activateStep(2);
     step2.scrollIntoView({ behavior: 'smooth', block: 'start' });
   });
 
   btnRetake.addEventListener('click', () => {
-    faceData = null;
-    faceCanvas = null;
+    personCanvas = null;
     facePreview.hidden = true;
     fileInput.value = '';
   });
@@ -170,7 +171,7 @@
     progressText.textContent = 'コラージュを合成しています...';
     await new Promise(r => setTimeout(r, 300));
 
-    CollageComposer.compose(collageCanvas, faceCanvas, images, favorites);
+    CollageComposer.compose(collageCanvas, personCanvas, images, favorites);
 
     progressArea.hidden = true;
     previewArea.hidden = false;
