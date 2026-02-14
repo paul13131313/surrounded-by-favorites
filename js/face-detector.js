@@ -1,5 +1,5 @@
 /* ========================================
-   顔検出 & 円形切り抜き (face-api.js)
+   顔検出 & 人物シルエット切り抜き (face-api.js)
    ======================================== */
 
 const FaceDetector = (() => {
@@ -37,53 +37,176 @@ const FaceDetector = (() => {
     if (!detection) return null;
 
     const box = detection.box;
-    const size = Math.max(box.width, box.height);
-    const padding = size * 0.2;
-    const cropSize = size + padding * 2;
+    // 顔の位置から人物全体の領域を推定
+    // 顔の幅を基準に、上半身〜全身を含む範囲をクロップ
+    const faceW = box.width;
+    const faceH = box.height;
+    const faceCx = box.x + faceW / 2;
+    const faceCy = box.y + faceH / 2;
 
-    const cx = box.x + box.width / 2;
-    const cy = box.y + box.height / 2;
-    let x = cx - cropSize / 2;
-    let y = cy - cropSize / 2;
+    // 人物領域：顔の幅の3倍程度の横幅、顔の上から下方向に顔の5倍程度
+    const personW = faceW * 3.5;
+    const personH = faceH * 5;
+    let cropX = faceCx - personW / 2;
+    let cropY = faceCy - faceH * 1.2; // 顔の上に少し余裕
+    let cropW = personW;
+    let cropH = personH;
 
-    x = Math.max(0, Math.min(x, resized.width - cropSize));
-    y = Math.max(0, Math.min(y, resized.height - cropSize));
-    const finalSize = Math.min(cropSize, resized.width - x, resized.height - y);
+    // 画像内に収める
+    cropX = Math.max(0, cropX);
+    cropY = Math.max(0, cropY);
+    cropW = Math.min(cropW, resized.width - cropX);
+    cropH = Math.min(cropH, resized.height - cropY);
 
-    return { canvas: resized, x, y, size: finalSize };
+    return {
+      canvas: resized,
+      x: cropX,
+      y: cropY,
+      width: cropW,
+      height: cropH,
+      faceBox: box
+    };
   }
 
-  function drawCircularCrop(targetCanvas, sourceCanvas, crop, displaySize = 200) {
-    targetCanvas.width = displaySize;
-    targetCanvas.height = displaySize;
-    const ctx = targetCanvas.getContext('2d');
+  /**
+   * 人物のシルエットを切り抜き（背景除去）
+   * 四隅から背景色をサンプリングし、flood fillで背景を透過にする
+   */
+  function removeBackground(sourceCanvas, crop) {
+    const outputW = 512;
+    const outputH = Math.round(512 * (crop.height / crop.width));
 
-    ctx.clearRect(0, 0, displaySize, displaySize);
-    ctx.save();
-    ctx.beginPath();
-    ctx.arc(displaySize / 2, displaySize / 2, displaySize / 2, 0, Math.PI * 2);
-    ctx.closePath();
-    ctx.clip();
-    ctx.drawImage(
-      sourceCanvas,
-      crop.x, crop.y, crop.size, crop.size,
-      0, 0, displaySize, displaySize
-    );
-    ctx.restore();
-  }
-
-  function getCroppedFaceCanvas(sourceCanvas, crop, outputSize = 512) {
     const canvas = document.createElement('canvas');
-    canvas.width = outputSize;
-    canvas.height = outputSize;
+    canvas.width = outputW;
+    canvas.height = outputH;
     const ctx = canvas.getContext('2d');
     ctx.drawImage(
       sourceCanvas,
-      crop.x, crop.y, crop.size, crop.size,
-      0, 0, outputSize, outputSize
+      crop.x, crop.y, crop.width, crop.height,
+      0, 0, outputW, outputH
     );
+
+    const imageData = ctx.getImageData(0, 0, outputW, outputH);
+    const data = imageData.data;
+    const w = outputW, h = outputH;
+
+    // 四隅の背景色をサンプリング
+    function getPixel(px, py) {
+      const idx = (py * w + px) * 4;
+      return [data[idx], data[idx + 1], data[idx + 2]];
+    }
+
+    const corners = [
+      getPixel(2, 2),
+      getPixel(w - 3, 2),
+      getPixel(2, h - 3),
+      getPixel(w - 3, h - 3),
+    ];
+    // 背景色の平均を計算
+    const bgR = corners.reduce((s, c) => s + c[0], 0) / 4;
+    const bgG = corners.reduce((s, c) => s + c[1], 0) / 4;
+    const bgB = corners.reduce((s, c) => s + c[2], 0) / 4;
+
+    // 背景色との類似度判定
+    function isBgColor(idx) {
+      const r = data[idx], g = data[idx + 1], b = data[idx + 2];
+      const diff = Math.sqrt(
+        (r - bgR) ** 2 + (g - bgG) ** 2 + (b - bgB) ** 2
+      );
+      return diff < 55; // 色距離閾値
+    }
+
+    const visited = new Uint8Array(w * h);
+    const toRemove = new Uint8Array(w * h);
+
+    // BFS flood fill
+    function floodFill(startX, startY) {
+      const startIdx = (startY * w + startX) * 4;
+      if (!isBgColor(startIdx)) return;
+
+      const queue = [[startX, startY]];
+      while (queue.length > 0) {
+        const [cx, cy] = queue.shift();
+        const pos = cy * w + cx;
+        if (visited[pos]) continue;
+        visited[pos] = 1;
+
+        const idx = pos * 4;
+        if (!isBgColor(idx)) continue;
+
+        toRemove[pos] = 1;
+
+        if (cx > 0) queue.push([cx - 1, cy]);
+        if (cx < w - 1) queue.push([cx + 1, cy]);
+        if (cy > 0) queue.push([cx, cy - 1]);
+        if (cy < h - 1) queue.push([cx, cy + 1]);
+      }
+    }
+
+    // 四隅 + 四辺中央からflood fill
+    floodFill(0, 0);
+    floodFill(w - 1, 0);
+    floodFill(0, h - 1);
+    floodFill(w - 1, h - 1);
+    floodFill(Math.floor(w / 2), 0);
+    floodFill(Math.floor(w / 2), h - 1);
+    floodFill(0, Math.floor(h / 2));
+    floodFill(w - 1, Math.floor(h / 2));
+
+    // エッジソフトアルファ
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        const pos = y * w + x;
+        if (toRemove[pos]) {
+          let minDist = 999;
+          const checkR = 4;
+          for (let dy = -checkR; dy <= checkR; dy++) {
+            for (let dx = -checkR; dx <= checkR; dx++) {
+              const nx = x + dx, ny = y + dy;
+              if (nx >= 0 && nx < w && ny >= 0 && ny < h) {
+                if (!toRemove[ny * w + nx]) {
+                  const d = Math.sqrt(dx * dx + dy * dy);
+                  if (d < minDist) minDist = d;
+                }
+              }
+            }
+          }
+          const idx = pos * 4;
+          if (minDist <= checkR) {
+            data[idx + 3] = Math.round(255 * (1 - minDist / (checkR + 1)));
+          } else {
+            data[idx + 3] = 0;
+          }
+        }
+      }
+    }
+
+    ctx.putImageData(imageData, 0, 0);
     return canvas;
   }
 
-  return { detect, drawCircularCrop, getCroppedFaceCanvas };
+  /**
+   * プレビュー用：切り抜いた人物をそのまま表示
+   */
+  function drawPreview(targetCanvas, cutoutCanvas, displayWidth = 200) {
+    const ratio = cutoutCanvas.height / cutoutCanvas.width;
+    const displayHeight = Math.round(displayWidth * ratio);
+    targetCanvas.width = displayWidth;
+    targetCanvas.height = displayHeight;
+    const ctx = targetCanvas.getContext('2d');
+    ctx.clearRect(0, 0, displayWidth, displayHeight);
+    ctx.drawImage(cutoutCanvas, 0, 0, displayWidth, displayHeight);
+  }
+
+  // 後方互換
+  function drawCircularCrop(targetCanvas, sourceCanvas, crop, displaySize = 200) {
+    const cutout = removeBackground(sourceCanvas, crop);
+    drawPreview(targetCanvas, cutout, displaySize);
+  }
+
+  function getCroppedFaceCanvas(sourceCanvas, crop, outputSize = 512) {
+    return removeBackground(sourceCanvas, crop);
+  }
+
+  return { detect, drawCircularCrop, drawPreview, removeBackground, getCroppedFaceCanvas };
 })();

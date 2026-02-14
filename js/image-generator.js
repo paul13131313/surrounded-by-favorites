@@ -3,14 +3,13 @@
    ======================================== */
 
 const ImageGenerator = (() => {
-  const TIMEOUT_MS = 40000;
+  const TIMEOUT_MS = 45000;
 
   function buildUrl(item) {
     const prompt = encodeURIComponent(
       `cute kawaii illustration of ${item}, flat design, pastel colors, solid white background, sticker style, no text, simple, cheerful, centered, single object`
     );
-    const seed = Math.floor(Math.random() * 999999);
-    return `https://image.pollinations.ai/prompt/${prompt}?width=512&height=512&nologo=true&seed=${seed}`;
+    return `https://gen.pollinations.ai/image/${prompt}?model=flux&nologo=true&nofeed=true`;
   }
 
   function loadImage(url) {
@@ -34,8 +33,8 @@ const ImageGenerator = (() => {
   }
 
   /**
-   * 白背景を透過にする（ステッカー切り抜き風）
-   * 白〜薄グレー領域をアルファ0にし、エッジをソフトに
+   * 四隅からのflood fill方式で白背景を透過にする
+   * イラスト内部のパステル色は保護される
    */
   function removeWhiteBackground(img) {
     const canvas = document.createElement('canvas');
@@ -47,19 +46,85 @@ const ImageGenerator = (() => {
 
     const imageData = ctx.getImageData(0, 0, size, size);
     const data = imageData.data;
-    const threshold = 235;
-    const softRange = 20;
+    const w = size, h = size;
 
-    for (let i = 0; i < data.length; i += 4) {
-      const r = data[i], g = data[i + 1], b = data[i + 2];
+    // visited配列
+    const visited = new Uint8Array(w * h);
+    // 透過対象配列
+    const toRemove = new Uint8Array(w * h);
+
+    // 背景色判定：明るくて彩度が低い
+    function isBgLike(idx) {
+      const r = data[idx], g = data[idx + 1], b = data[idx + 2];
       const brightness = (r + g + b) / 3;
       const saturation = Math.max(r, g, b) - Math.min(r, g, b);
+      return brightness > 220 && saturation < 50;
+    }
 
-      if (brightness > threshold && saturation < 40) {
-        data[i + 3] = 0;
-      } else if (brightness > (threshold - softRange) && saturation < 60) {
-        const factor = (threshold - brightness) / softRange;
-        data[i + 3] = Math.round(255 * Math.max(0, Math.min(1, factor)));
+    // BFS flood fill（四隅から）
+    function floodFill(startX, startY) {
+      const queue = [[startX, startY]];
+      const startIdx = (startY * w + startX) * 4;
+      if (!isBgLike(startIdx)) return;
+
+      while (queue.length > 0) {
+        const [cx, cy] = queue.shift();
+        const pos = cy * w + cx;
+        if (visited[pos]) continue;
+        visited[pos] = 1;
+
+        const idx = pos * 4;
+        if (!isBgLike(idx)) continue;
+
+        toRemove[pos] = 1;
+
+        // 4方向
+        if (cx > 0) queue.push([cx - 1, cy]);
+        if (cx < w - 1) queue.push([cx + 1, cy]);
+        if (cy > 0) queue.push([cx, cy - 1]);
+        if (cy < h - 1) queue.push([cx, cy + 1]);
+      }
+    }
+
+    // 四隅からflood fill
+    floodFill(0, 0);
+    floodFill(w - 1, 0);
+    floodFill(0, h - 1);
+    floodFill(w - 1, h - 1);
+    // 四辺の中央からも
+    floodFill(Math.floor(w / 2), 0);
+    floodFill(Math.floor(w / 2), h - 1);
+    floodFill(0, Math.floor(h / 2));
+    floodFill(w - 1, Math.floor(h / 2));
+
+    // 透過適用（エッジにソフトアルファ）
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        const pos = y * w + x;
+        if (toRemove[pos]) {
+          // エッジ付近をチェック（非除去ピクセルとの距離）
+          let minDist = 999;
+          const checkR = 3;
+          for (let dy = -checkR; dy <= checkR; dy++) {
+            for (let dx = -checkR; dx <= checkR; dx++) {
+              const nx = x + dx, ny = y + dy;
+              if (nx >= 0 && nx < w && ny >= 0 && ny < h) {
+                const npos = ny * w + nx;
+                if (!toRemove[npos]) {
+                  const d = Math.sqrt(dx * dx + dy * dy);
+                  if (d < minDist) minDist = d;
+                }
+              }
+            }
+          }
+          const idx = pos * 4;
+          if (minDist <= checkR) {
+            // エッジ付近：ソフトアルファ
+            data[idx + 3] = Math.round(255 * (1 - minDist / (checkR + 1)));
+          } else {
+            data[idx + 3] = 0;
+          }
+        }
       }
     }
 
@@ -78,26 +143,18 @@ const ImageGenerator = (() => {
     canvas.height = 512;
     const ctx = canvas.getContext('2d');
 
-    // 透過背景のカード
     const colors = [
       '#FFB3BA', '#BAFFC9', '#BAE1FF', '#FFFFBA',
       '#E8BAFF', '#FFDFBA', '#C9BAFF', '#BAFFEE'
     ];
     const bg = colors[Math.floor(Math.random() * colors.length)];
 
-    // 不定形ブロブを描画
+    // パステル色の円形ブロブ
     ctx.save();
-    ctx.translate(256, 256);
     ctx.beginPath();
-    for (let a = 0; a < Math.PI * 2; a += 0.1) {
-      const r = 180 + Math.sin(a * 3) * 30 + Math.cos(a * 5) * 20;
-      const x = Math.cos(a) * r;
-      const y = Math.sin(a) * r;
-      a === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
-    }
-    ctx.closePath();
+    ctx.arc(256, 256, 200, 0, Math.PI * 2);
     ctx.fillStyle = bg;
-    ctx.globalAlpha = 0.85;
+    ctx.globalAlpha = 0.9;
     ctx.fill();
     ctx.globalAlpha = 1;
     ctx.restore();
@@ -123,6 +180,7 @@ const ImageGenerator = (() => {
       return cut;
     } catch (e) {
       try {
+        // リトライ
         const url2 = buildUrl(item);
         const img = await loadImage(url2);
         const cut = await removeWhiteBackground(img);

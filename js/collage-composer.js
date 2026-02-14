@@ -1,5 +1,6 @@
 /* ========================================
-   コラージュ合成 — 美術的コラージュ (Canvas API)
+   コラージュ合成 — 密集レイアウト (Canvas API)
+   「好きなものに囲まれている」= ぎゅっと中央に密集
    ======================================== */
 
 // roundRect polyfill
@@ -17,277 +18,151 @@ if (!CanvasRenderingContext2D.prototype.roundRect) {
 
 const CollageComposer = (() => {
   const SIZE = 1080;
+  const CX = SIZE / 2;
+  const CY = SIZE / 2;
 
-  /* ─── 背景：紙テクスチャ風 ─── */
+  /* ─── 背景 ─── */
   function drawBackground(ctx) {
-    // ベースグラデーション
     const palettes = [
-      ['#FFF8F0', '#FFE8E0', '#FFF0F5'],
-      ['#F0F5FF', '#E8E0F5', '#FFF0F8'],
-      ['#FFFFF0', '#FFF0E0', '#FFF5EE'],
-      ['#F0FFF5', '#E8F5F0', '#F5FFF8'],
+      ['#FFF8F0', '#FFEEE5', '#FFF5F0'],
+      ['#F0F5FF', '#E8ECFF', '#F5F0FF'],
+      ['#FFFFF0', '#FFF5E5', '#FFF8EE'],
+      ['#F5FFF0', '#EEFFF0', '#F8FFF5'],
     ];
     const pal = palettes[Math.floor(Math.random() * palettes.length)];
-    const grad = ctx.createLinearGradient(0, 0, SIZE, SIZE);
+    const grad = ctx.createRadialGradient(CX, CY, 0, CX, CY, SIZE * 0.75);
     grad.addColorStop(0, pal[0]);
-    grad.addColorStop(0.5, pal[1]);
+    grad.addColorStop(0.6, pal[1]);
     grad.addColorStop(1, pal[2]);
     ctx.fillStyle = grad;
     ctx.fillRect(0, 0, SIZE, SIZE);
-
-    // 紙テクスチャ（細かいノイズ）
-    ctx.globalAlpha = 0.03;
-    for (let i = 0; i < 8000; i++) {
-      const x = Math.random() * SIZE;
-      const y = Math.random() * SIZE;
-      ctx.fillStyle = Math.random() > 0.5 ? '#000' : '#fff';
-      ctx.fillRect(x, y, 1, 1);
-    }
-    ctx.globalAlpha = 1;
-
-    // 水彩にじみ風の大きなブロブ
-    const blobColors = ['#FFD6E0', '#D6E8FF', '#E0FFD6', '#FFF0D6', '#E8D6FF'];
-    for (let i = 0; i < 4; i++) {
-      ctx.save();
-      ctx.globalAlpha = 0.08 + Math.random() * 0.06;
-      const bx = Math.random() * SIZE;
-      const by = Math.random() * SIZE;
-      const br = 150 + Math.random() * 200;
-      const bg = ctx.createRadialGradient(bx, by, 0, bx, by, br);
-      bg.addColorStop(0, blobColors[Math.floor(Math.random() * blobColors.length)]);
-      bg.addColorStop(1, 'transparent');
-      ctx.fillStyle = bg;
-      ctx.fillRect(bx - br, by - br, br * 2, br * 2);
-      ctx.restore();
-    }
   }
 
-  /* ─── マスキングテープの描画 ─── */
-  function drawMaskingTape(ctx, x, y, angle, length) {
-    const tapeColors = [
-      'rgba(255,200,200,0.55)', 'rgba(200,230,255,0.55)',
-      'rgba(255,240,180,0.55)', 'rgba(200,255,210,0.55)',
-      'rgba(230,210,255,0.55)', 'rgba(255,220,200,0.55)',
-    ];
-    ctx.save();
-    ctx.translate(x, y);
-    ctx.rotate(angle);
-    ctx.fillStyle = tapeColors[Math.floor(Math.random() * tapeColors.length)];
-    const w = length || (40 + Math.random() * 30);
-    const h = 10 + Math.random() * 6;
-    ctx.fillRect(-w / 2, -h / 2, w, h);
+  /* ─── 密集レイアウト生成 ─── */
+  function generateLayout(personH) {
+    // 人物の高さに応じて周囲にぎゅっと配置
+    // 8つのイラストを人物のすぐ周りに密集させる
+    const baseRadius = Math.max(personH * 0.42, 220);
 
-    // テープのストライプ
-    ctx.globalAlpha = 0.1;
-    ctx.strokeStyle = '#fff';
-    ctx.lineWidth = 1;
-    for (let sx = -w / 2; sx < w / 2; sx += 5) {
-      ctx.beginPath();
-      ctx.moveTo(sx, -h / 2);
-      ctx.lineTo(sx + 3, h / 2);
-      ctx.stroke();
-    }
-    ctx.restore();
-  }
+    // 8方向に配置（ただし完全等間隔ではなくジッター付き）
+    const positions = [];
+    for (let i = 0; i < 8; i++) {
+      const baseAngle = (i / 8) * Math.PI * 2 - Math.PI / 2;
+      const angleJitter = (Math.random() - 0.5) * 0.35;
+      const angle = baseAngle + angleJitter;
 
-  /* ─── 切り抜きイラストの配置レイアウト生成 ─── */
-  function generateLayout() {
-    // 8つの配置位置：中央の顔を避けながら有機的にばらまく
-    // 画面を大まかにゾーンに分け、各ゾーン内でランダムにずらす
-    const zones = [
-      { cx: 190, cy: 160 },   // 左上
-      { cx: 540, cy: 120 },   // 上中央
-      { cx: 880, cy: 170 },   // 右上
-      { cx: 130, cy: 520 },   // 左中
-      { cx: 920, cy: 500 },   // 右中
-      { cx: 170, cy: 840 },   // 左下
-      { cx: 540, cy: 900 },   // 下中央
-      { cx: 870, cy: 860 },   // 右下
-    ];
+      // 距離にもランダム性（近いのと遠いのを混ぜる）
+      const radiusJitter = (Math.random() - 0.5) * 80;
+      const r = baseRadius + radiusJitter;
 
-    return zones.map((z, i) => {
-      const jitterX = (Math.random() - 0.5) * 100;
-      const jitterY = (Math.random() - 0.5) * 80;
-      const rotation = (Math.random() - 0.5) * 0.4; // ±約12度
-      // サイズに変化をつける（大小混在がコラージュらしい）
-      const sizeVariants = [220, 200, 250, 190, 240, 210, 230, 195];
-      const size = sizeVariants[i] + (Math.random() - 0.5) * 40;
+      // サイズ：大小混在（160〜270px）
+      const sizes = [240, 200, 260, 180, 250, 210, 230, 195];
+      const size = sizes[i] + (Math.random() - 0.5) * 30;
 
-      return {
-        x: z.cx + jitterX,
-        y: z.cy + jitterY,
+      // 回転
+      const rotation = (Math.random() - 0.5) * 0.5; // ±約15度
+
+      positions.push({
+        x: CX + Math.cos(angle) * r,
+        y: CY + Math.sin(angle) * r,
         size,
         rotation,
-        zIndex: Math.random(), // 描画順ランダム化
-      };
-    });
+        zIndex: i, // 描画順は後で制御
+      });
+    }
+
+    return positions;
   }
 
-  /* ─── 不定形切り抜きマスク（ハサミで切ったような輪郭） ─── */
-  function applyTornMask(ctx, x, y, w, h) {
-    ctx.beginPath();
-    const steps = 40;
-    const wobble = 6;
-    // 上辺
-    for (let i = 0; i <= steps; i++) {
-      const px = x + (w * i) / steps;
-      const py = y + (Math.random() - 0.5) * wobble;
-      i === 0 ? ctx.moveTo(px, py) : ctx.lineTo(px, py);
-    }
-    // 右辺
-    for (let i = 0; i <= steps; i++) {
-      const px = x + w + (Math.random() - 0.5) * wobble;
-      const py = y + (h * i) / steps;
-      ctx.lineTo(px, py);
-    }
-    // 下辺
-    for (let i = steps; i >= 0; i--) {
-      const px = x + (w * i) / steps;
-      const py = y + h + (Math.random() - 0.5) * wobble;
-      ctx.lineTo(px, py);
-    }
-    // 左辺
-    for (let i = steps; i >= 0; i--) {
-      const px = x + (Math.random() - 0.5) * wobble;
-      const py = y + (h * i) / steps;
-      ctx.lineTo(px, py);
-    }
-    ctx.closePath();
-  }
-
-  /* ─── イラスト1枚の描画 ─── */
-  function drawIllustration(ctx, img, layout, label) {
+  /* ─── イラスト1枚描画（切り抜きステッカー風） ─── */
+  function drawIllust(ctx, img, layout, label) {
+    if (!img) return;
     const { x, y, size, rotation } = layout;
 
     ctx.save();
     ctx.translate(x, y);
     ctx.rotate(rotation);
 
-    // ドロップシャドウ
-    ctx.shadowColor = 'rgba(60,30,10,0.18)';
-    ctx.shadowBlur = 16;
-    ctx.shadowOffsetX = 4;
-    ctx.shadowOffsetY = 6;
+    // 軽いドロップシャドウ
+    ctx.shadowColor = 'rgba(0,0,0,0.15)';
+    ctx.shadowBlur = 10;
+    ctx.shadowOffsetX = 2;
+    ctx.shadowOffsetY = 3;
 
-    // 白いカード台紙（不定形エッジ）
-    ctx.fillStyle = '#ffffffee';
-    const pad = 12;
-    applyTornMask(ctx, -size / 2 - pad, -size / 2 - pad, size + pad * 2, size + pad * 2 + 28);
-    ctx.fill();
-
-    // シャドウをリセット
-    ctx.shadowColor = 'transparent';
-    ctx.shadowBlur = 0;
-    ctx.shadowOffsetX = 0;
-    ctx.shadowOffsetY = 0;
-
-    // 画像を描画
-    if (img) {
-      ctx.drawImage(img, -size / 2, -size / 2, size, size);
-    }
-
-    // アイテム名ラベル（手書き風に下部に）
-    ctx.fillStyle = '#5a3e28';
-    ctx.font = `bold ${Math.round(size * 0.09)}px 'Zen Maru Gothic', sans-serif`;
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillText(label, 0, size / 2 + 14);
-
-    ctx.restore();
-
-    // マスキングテープを確率で貼る
-    if (Math.random() > 0.35) {
-      const tx = x + (Math.random() - 0.5) * size * 0.4;
-      const ty = y - size / 2 - 6 + (Math.random() - 0.5) * 10;
-      drawMaskingTape(ctx, tx, ty, rotation + (Math.random() - 0.5) * 0.5, 45 + Math.random() * 25);
-    }
-  }
-
-  /* ─── 顔写真（コラージュの主役） ─── */
-  function drawFace(ctx, faceCanvas) {
-    const cx = SIZE / 2;
-    const cy = SIZE / 2;
-    const radius = 150;
-
-    ctx.save();
-
-    // 軽い回転（少しだけ傾ける）
-    const faceRotation = (Math.random() - 0.5) * 0.08;
-    ctx.translate(cx, cy);
-    ctx.rotate(faceRotation);
-
-    // シャドウ
-    ctx.shadowColor = 'rgba(40,20,5,0.25)';
-    ctx.shadowBlur = 24;
-    ctx.shadowOffsetY = 6;
-
-    // 白い縁取り（ポラロイド風の太い白枠）
-    ctx.fillStyle = '#ffffff';
-    ctx.beginPath();
-    ctx.arc(0, 0, radius + 12, 0, Math.PI * 2);
-    ctx.fill();
+    // 画像描画（背景は既に透過済み）
+    ctx.drawImage(img, -size / 2, -size / 2, size, size);
 
     // シャドウリセット
     ctx.shadowColor = 'transparent';
+    ctx.shadowBlur = 0;
 
-    // 顔画像（円形クリップ）
+    // ラベル（小さく控えめに）
+    ctx.fillStyle = 'rgba(255,255,255,0.75)';
+    ctx.font = `bold ${Math.round(size * 0.08)}px 'Zen Maru Gothic', sans-serif`;
+    ctx.textAlign = 'center';
+    const textW = ctx.measureText(label).width + 12;
     ctx.beginPath();
-    ctx.arc(0, 0, radius, 0, Math.PI * 2);
-    ctx.closePath();
-    ctx.clip();
-    ctx.drawImage(faceCanvas, -radius, -radius, radius * 2, radius * 2);
+    ctx.roundRect(-textW / 2, size / 2 - 8, textW, 18, 9);
+    ctx.fill();
+
+    ctx.fillStyle = '#4a3728';
+    ctx.font = `bold ${Math.round(size * 0.08)}px 'Zen Maru Gothic', sans-serif`;
+    ctx.fillText(label, 0, size / 2 + 5);
 
     ctx.restore();
-
-    // マスキングテープを顔の上に
-    drawMaskingTape(ctx, cx - 40 + Math.random() * 80, cy - radius - 8, (Math.random() - 0.5) * 0.6, 55);
   }
 
-  /* ─── タイトルテキスト ─── */
-  function drawTitle(ctx) {
-    const y = SIZE - 48;
+  /* ─── 人物描画（シルエット切り抜き） ─── */
+  function drawPerson(ctx, personCanvas) {
+    const maxH = 450;
+    const ratio = personCanvas.width / personCanvas.height;
+    let drawH = Math.min(maxH, personCanvas.height);
+    let drawW = drawH * ratio;
+
+    // 大きすぎたら調整
+    if (drawW > 400) {
+      drawW = 400;
+      drawH = drawW / ratio;
+    }
+
     ctx.save();
 
-    ctx.font = "bold 26px 'Zen Maru Gothic', sans-serif";
+    // 軽いシャドウ
+    ctx.shadowColor = 'rgba(0,0,0,0.2)';
+    ctx.shadowBlur = 20;
+    ctx.shadowOffsetY = 5;
+
+    ctx.drawImage(
+      personCanvas,
+      CX - drawW / 2, CY - drawH / 2,
+      drawW, drawH
+    );
+    ctx.restore();
+
+    return { drawW, drawH };
+  }
+
+  /* ─── タイトル ─── */
+  function drawTitle(ctx) {
+    const y = SIZE - 45;
+    ctx.save();
+    ctx.font = "bold 24px 'Zen Maru Gothic', sans-serif";
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
 
-    // 半透明の帯
-    ctx.fillStyle = 'rgba(255,255,255,0.6)';
-    const tw = ctx.measureText('好きなものに囲まれたい').width + 48;
+    ctx.fillStyle = 'rgba(255,255,255,0.65)';
+    const tw = ctx.measureText('好きなものに囲まれたい').width + 40;
     ctx.beginPath();
-    ctx.roundRect(SIZE / 2 - tw / 2, y - 18, tw, 36, 18);
+    ctx.roundRect(CX - tw / 2, y - 16, tw, 32, 16);
     ctx.fill();
 
     ctx.fillStyle = '#d4537a';
-    ctx.fillText('好きなものに囲まれたい', SIZE / 2, y);
-    ctx.restore();
-  }
-
-  /* ─── 装飾パーツ（星・ハート・点線など） ─── */
-  function drawDecorations(ctx) {
-    const decos = ['✦', '♡', '✿', '◦', '·', '♪', '☆'];
-    ctx.save();
-    ctx.font = '16px sans-serif';
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    for (let i = 0; i < 20; i++) {
-      ctx.globalAlpha = 0.15 + Math.random() * 0.15;
-      ctx.fillStyle = ['#f2789f', '#8ec5d6', '#ffc857', '#c9a0dc', '#a8d8a8'][Math.floor(Math.random() * 5)];
-      const sz = 12 + Math.random() * 14;
-      ctx.font = `${sz}px sans-serif`;
-      ctx.fillText(
-        decos[Math.floor(Math.random() * decos.length)],
-        Math.random() * SIZE,
-        Math.random() * SIZE
-      );
-    }
-    ctx.globalAlpha = 1;
+    ctx.fillText('好きなものに囲まれたい', CX, y);
     ctx.restore();
   }
 
   /* ─── メイン合成 ─── */
-  function compose(canvas, faceCanvas, illustImages, items) {
+  function compose(canvas, personCanvas, illustImages, items) {
     canvas.width = SIZE;
     canvas.height = SIZE;
     const ctx = canvas.getContext('2d');
@@ -295,31 +170,27 @@ const CollageComposer = (() => {
     // 1. 背景
     drawBackground(ctx);
 
-    // 2. 装飾パーツ（背面）
-    drawDecorations(ctx);
+    // 2. 人物の高さを先に計算してレイアウトに使う
+    const ratio = personCanvas.width / personCanvas.height;
+    let personH = Math.min(450, personCanvas.height);
+    let personW = personH * ratio;
+    if (personW > 400) { personW = 400; personH = personW / ratio; }
 
-    // 3. レイアウト生成＆描画順ソート
-    const layout = generateLayout();
-    const drawOrder = layout
-      .map((l, i) => ({ ...l, index: i }))
-      .sort((a, b) => a.zIndex - b.zIndex);
+    // 3. 密集レイアウト生成
+    const layout = generateLayout(personH);
 
-    // 4. 顔より後ろのイラスト（zIndex < 0.5）
-    drawOrder
-      .filter(l => l.zIndex < 0.5)
-      .forEach(l => {
-        drawIllustration(ctx, illustImages[l.index], l, items[l.index]);
-      });
+    // 4. 後ろのイラスト（0〜4番）
+    for (let i = 0; i < 4; i++) {
+      drawIllust(ctx, illustImages[i], layout[i], items[i]);
+    }
 
-    // 5. 顔写真（中央・主役）
-    drawFace(ctx, faceCanvas);
+    // 5. 人物（中央・主役）
+    drawPerson(ctx, personCanvas);
 
-    // 6. 顔より前のイラスト（zIndex >= 0.5）
-    drawOrder
-      .filter(l => l.zIndex >= 0.5)
-      .forEach(l => {
-        drawIllustration(ctx, illustImages[l.index], l, items[l.index]);
-      });
+    // 6. 前面のイラスト（5〜7番）— 人物の前にかぶさる
+    for (let i = 4; i < 8; i++) {
+      drawIllust(ctx, illustImages[i], layout[i], items[i]);
+    }
 
     // 7. タイトル
     drawTitle(ctx);

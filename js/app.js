@@ -82,7 +82,10 @@
         showFaceError('お顔が見つかりませんでした。正面を向いた明るい写真でお試しください');
         return;
       }
-      faceData = { canvas: result.canvas, crop: { x: result.x, y: result.y, size: result.size } };
+      faceData = {
+        canvas: result.canvas,
+        crop: { x: result.x, y: result.y, width: result.width, height: result.height }
+      };
       FaceDetector.drawCircularCrop(faceCanvasEl, result.canvas, faceData.crop);
       faceMessage.textContent = 'すてきな笑顔ですね!';
       btnUseFace.hidden = false;
