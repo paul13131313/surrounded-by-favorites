@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>好きなものに囲まれたい</title>
+  <meta name="description" content="好きなもの8つに囲まれた、あなただけのコラージュをつくろう">
+  <meta property="og:title" content="好きなものに囲まれたい">
+  <meta property="og:description" content="好きなもの8つに囲まれた、あなただけのコラージュをつくろう">
+  <meta property="og:image" content="https://paul13131313.github.io/surrounded-by-favorites/ogp.png">
+  <meta property="og:url" content="https://paul13131313.github.io/surrounded-by-favorites/">
+  <meta property="og:type" content="website">
+  <meta name="twitter:card" content="summary_large_image">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>💖</text></svg>">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Zen+Maru+Gothic:wght@400;500;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <!-- ヘッダー -->
+  <header class="header">
+    <h1 class="header-title">好きなものに囲まれたい</h1>
+    <p class="header-sub">好きなもの8つに囲まれた、あなただけのコラージュをつくろう</p>
+  </header>
+
+  <main class="container">
+    <!-- STEP 1: 写真アップロード -->
+    <section id="step1" class="step step--active">
+      <div class="step-header">
+        <span class="step-number">1</span>
+        <h2 class="step-title">あなたの写真をアップロード</h2>
+      </div>
+
+      <div id="uploadArea" class="upload-area">
+        <div class="upload-icon">📸</div>
+        <p class="upload-text">写真をドラッグ&ドロップ<br>またはタップして選択</p>
+        <p class="upload-hint">笑顔の写真がおすすめ!</p>
+        <input type="file" id="fileInput" accept="image/jpeg,image/png,image/webp" hidden>
+      </div>
+
+      <div id="facePreview" class="face-preview" hidden>
+        <canvas id="faceCanvas" class="face-canvas"></canvas>
+        <p class="face-message" id="faceMessage"></p>
+        <div class="face-actions">
+          <button id="btnUseFace" class="btn btn--primary" hidden>この顔でつくる!</button>
+          <button id="btnRetake" class="btn btn--secondary" hidden>別の写真を使う</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- STEP 2: 好きなもの入力 -->
+    <section id="step2" class="step">
+      <div class="step-header">
+        <span class="step-number">2</span>
+        <h2 class="step-title">好きなもの8つを入力</h2>
+      </div>
+
+      <p class="input-count">入力済み: <span id="inputCount">0</span> / 8</p>
+
+      <div class="favorites-grid">
+        <div class="favorite-item">
+          <span class="favorite-number">1</span>
+          <input type="text" class="favorite-input" data-index="0" placeholder="コーヒー" maxlength="20">
+        </div>
+        <div class="favorite-item">
+          <span class="favorite-number">2</span>
+          <input type="text" class="favorite-input" data-index="1" placeholder="猫" maxlength="20">
+        </div>
+        <div class="favorite-item">
+          <span class="favorite-number">3</span>
+          <input type="text" class="favorite-input" data-index="2" placeholder="旅行" maxlength="20">
+        </div>
+        <div class="favorite-item">
+          <span class="favorite-number">4</span>
+          <input type="text" class="favorite-input" data-index="3" placeholder="音楽" maxlength="20">
+        </div>
+        <div class="favorite-item">
+          <span class="favorite-number">5</span>
+          <input type="text" class="favorite-input" data-index="4" placeholder="映画" maxlength="20">
+        </div>
+        <div class="favorite-item">
+          <span class="favorite-number">6</span>
+          <input type="text" class="favorite-input" data-index="5" placeholder="海" maxlength="20">
+        </div>
+        <div class="favorite-item">
+          <span class="favorite-number">7</span>
+          <input type="text" class="favorite-input" data-index="6" placeholder="花" maxlength="20">
+        </div>
+        <div class="favorite-item">
+          <span class="favorite-number">8</span>
+          <input type="text" class="favorite-input" data-index="7" placeholder="本" maxlength="20">
+        </div>
+      </div>
+
+      <button id="btnGenerate" class="btn btn--primary btn--large" disabled>つくる!</button>
+    </section>
+
+    <!-- STEP 3: 生成 & プレビュー -->
+    <section id="step3" class="step">
+      <div class="step-header">
+        <span class="step-number">3</span>
+        <h2 class="step-title">あなたのコラージュ</h2>
+      </div>
+
+      <!-- 生成中の進捗 -->
+      <div id="progressArea" class="progress-area" hidden>
+        <div class="progress-spinner"></div>
+        <p class="progress-text" id="progressText">イラストを生成しています...</p>
+        <div class="progress-items" id="progressItems"></div>
+      </div>
+
+      <!-- プレビュー -->
+      <div id="previewArea" class="preview-area" hidden>
+        <canvas id="collageCanvas" class="collage-canvas" width="1080" height="1080"></canvas>
+        <div class="share-actions">
+          <button id="btnDownload" class="btn btn--primary">画像を保存</button>
+          <button id="btnShare" class="btn btn--secondary">シェア</button>
+          <button id="btnRetry" class="btn btn--outline">もう一度つくる</button>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="footer">
+    <p>&copy; 2025 好きなものに囲まれたい</p>
+  </footer>
+
+  <script src="https://cdn.jsdelivr.net/npm/face-api.js@0.22.2/dist/face-api.min.js"></script>
+  <script src="js/face-detector.js"></script>
+  <script src="js/image-generator.js"></script>
+  <script src="js/collage-composer.js"></script>
+  <script src="js/share.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>
