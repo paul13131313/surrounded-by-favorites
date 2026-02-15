@@ -1,5 +1,6 @@
 /* ========================================
    メインアプリロジック・状態管理
+   テキスト描画はcollage-composer.js内のみで行う
    ======================================== */
 
 import PersonSegmenter from './person-segmenter.js';
@@ -9,7 +10,7 @@ import Share from './share.js';
 
 (() => {
   // 状態
-  let personCanvas = null;   // セグメンテーション済みの人物Canvas（背景透明）
+  let portraitCanvas = null;   // 円形ポートレート（背景透明）
   const favorites = new Array(8).fill('');
 
   // DOM
@@ -81,14 +82,14 @@ import Share from './share.js';
     faceMessage.textContent = '人物を検出しています...';
 
     try {
-      const result = await PersonSegmenter.detect(img);
-      if (!result) {
+      const portrait = await PersonSegmenter.createPortrait(img);
+      if (!portrait) {
         showFaceError('人物が見つかりませんでした。人物がはっきり写った写真をお使いください');
         return;
       }
 
-      personCanvas = result.croppedCanvas;
-      PersonSegmenter.drawPreview(faceCanvasEl, personCanvas);
+      portraitCanvas = portrait;
+      PersonSegmenter.drawPreview(faceCanvasEl, portraitCanvas);
       faceMessage.textContent = 'きれいに切り抜けました!';
       btnUseFace.hidden = false;
       btnRetake.hidden = false;
@@ -104,7 +105,6 @@ import Share from './share.js';
     faceMessage.textContent = msg;
     btnUseFace.hidden = true;
     btnRetake.hidden = false;
-    // クリアプレビュー
     const ctx = faceCanvasEl.getContext('2d');
     faceCanvasEl.width = 200;
     faceCanvasEl.height = 200;
@@ -117,7 +117,7 @@ import Share from './share.js';
   });
 
   btnRetake.addEventListener('click', () => {
-    personCanvas = null;
+    portraitCanvas = null;
     facePreview.hidden = true;
     fileInput.value = '';
   });
@@ -159,7 +159,8 @@ import Share from './share.js';
 
     progressText.textContent = 'イラストを生成しています...';
 
-    const images = await ImageGenerator.generateAll(favorites, (i, status) => {
+    // イラスト8枚を並列読み込み（fetch+blob方式）
+    const images = await ImageGenerator.loadAllIllustrations(favorites, (i, status) => {
       const el = document.getElementById(`progress-${i}`);
       if (!el) return;
       el.className = `progress-item ${status}`;
@@ -171,7 +172,8 @@ import Share from './share.js';
     progressText.textContent = 'コラージュを合成しています...';
     await new Promise(r => setTimeout(r, 300));
 
-    CollageComposer.compose(collageCanvas, personCanvas, images, favorites);
+    // コラージュ合成（テキスト描画はcomposeCollage内のみ）
+    CollageComposer.compose(collageCanvas, portraitCanvas, images, favorites);
 
     progressArea.hidden = true;
     previewArea.hidden = false;

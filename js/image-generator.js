@@ -1,243 +1,151 @@
-/* ========================================
-   Pollinations.ai イラスト生成 + 背景除去
-   ======================================== */
+/**
+ * image-generator.js
+ * Pollinations.ai からイラストを取得する
+ *
+ * fetch+blob方式を使う（CORS問題の完全回避）
+ */
 
-const TIMEOUT_MS = 45000;
+function buildPrompt(item) {
+  return `cute kawaii illustration of ${item}, flat design, pastel colors, white background, sticker style, no text, simple and cheerful, digital art`;
+}
 
 function buildUrl(item) {
-  const prompt = encodeURIComponent(
-    `cute kawaii illustration of ${item}, flat design, pastel colors, solid white background, sticker style, no text, simple, cheerful, centered, single object`
-  );
-  return `https://gen.pollinations.ai/image/${prompt}?model=flux&nologo=true&nofeed=true`;
+  const prompt = encodeURIComponent(buildPrompt(item));
+  const seed = Math.floor(Math.random() * 100000);
+  return `https://gen.pollinations.ai/image/${prompt}?model=flux&nologo=true&nofeed=true&seed=${seed}`;
 }
 
-function loadImage(url) {
+/**
+ * 1枚のイラストを読み込む（fetch + blob URL方式）
+ * この方式ならCORS問題が起きない
+ */
+function loadSingleImage(item) {
   return new Promise((resolve, reject) => {
-    const img = new Image();
-    // crossOriginを設定しない（CORSエラー回避）
-    const timer = setTimeout(() => {
-      img.src = '';
-      reject(new Error('timeout'));
-    }, TIMEOUT_MS);
-    img.onload = () => {
-      clearTimeout(timer);
-      resolve(img);
-    };
-    img.onerror = () => {
-      clearTimeout(timer);
-      reject(new Error('load failed'));
-    };
-    img.src = url;
+    const url = buildUrl(item);
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 60000);
+
+    fetch(url, { signal: controller.signal })
+      .then(response => {
+        clearTimeout(timeoutId);
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        return response.blob();
+      })
+      .then(blob => {
+        const objectUrl = URL.createObjectURL(blob);
+        const img = new Image();
+        img.onload = () => {
+          resolve(img);
+        };
+        img.onerror = () => {
+          URL.revokeObjectURL(objectUrl);
+          reject(new Error('Image decode failed'));
+        };
+        img.src = objectUrl;
+      })
+      .catch(err => {
+        clearTimeout(timeoutId);
+        reject(err);
+      });
   });
 }
 
 /**
- * 四隅からのflood fill方式で白背景を透過にする
- * イラスト内部のパステル色は保護される
- * tainted canvasの場合はSecurityErrorを投げる
+ * 1枚のイラストをリトライ付きで読み込む
  */
-function removeWhiteBackground(img) {
-  const canvas = document.createElement('canvas');
-  const size = 512;
-  canvas.width = size;
-  canvas.height = size;
-  const ctx = canvas.getContext('2d');
-  ctx.drawImage(img, 0, 0, size, size);
-
-  // getImageDataはtainted canvasでSecurityErrorを投げる
-  const imageData = ctx.getImageData(0, 0, size, size);
-  const data = imageData.data;
-  const w = size, h = size;
-
-  // visited配列
-  const visited = new Uint8Array(w * h);
-  // 透過対象配列
-  const toRemove = new Uint8Array(w * h);
-
-  // 背景色判定：明るくて彩度が低い
-  function isBgLike(idx) {
-    const r = data[idx], g = data[idx + 1], b = data[idx + 2];
-    const brightness = (r + g + b) / 3;
-    const saturation = Math.max(r, g, b) - Math.min(r, g, b);
-    return brightness > 220 && saturation < 50;
-  }
-
-  // BFS flood fill（インデックスベース）
-  function floodFill(startX, startY) {
-    const startIdx = (startY * w + startX) * 4;
-    if (!isBgLike(startIdx)) return;
-
-    const queue = [startX, startY];
-    let head = 0;
-
-    while (head < queue.length) {
-      const cx = queue[head++];
-      const cy = queue[head++];
-      const pos = cy * w + cx;
-      if (visited[pos]) continue;
-      visited[pos] = 1;
-
-      const idx = pos * 4;
-      if (!isBgLike(idx)) continue;
-
-      toRemove[pos] = 1;
-
-      // 4方向
-      if (cx > 0) { queue.push(cx - 1, cy); }
-      if (cx < w - 1) { queue.push(cx + 1, cy); }
-      if (cy > 0) { queue.push(cx, cy - 1); }
-      if (cy < h - 1) { queue.push(cx, cy + 1); }
-    }
-  }
-
-  // 四隅からflood fill
-  floodFill(0, 0);
-  floodFill(w - 1, 0);
-  floodFill(0, h - 1);
-  floodFill(w - 1, h - 1);
-  // 四辺の中央からも
-  floodFill(Math.floor(w / 2), 0);
-  floodFill(Math.floor(w / 2), h - 1);
-  floodFill(0, Math.floor(h / 2));
-  floodFill(w - 1, Math.floor(h / 2));
-
-  // 透過適用（エッジにソフトアルファ）
-  for (let y = 0; y < h; y++) {
-    for (let x = 0; x < w; x++) {
-      const pos = y * w + x;
-      if (toRemove[pos]) {
-        let minDist = 999;
-        const checkR = 3;
-        for (let dy = -checkR; dy <= checkR; dy++) {
-          for (let dx = -checkR; dx <= checkR; dx++) {
-            const nx = x + dx, ny = y + dy;
-            if (nx >= 0 && nx < w && ny >= 0 && ny < h) {
-              const npos = ny * w + nx;
-              if (!toRemove[npos]) {
-                const d = Math.sqrt(dx * dx + dy * dy);
-                if (d < minDist) minDist = d;
-              }
-            }
-          }
-        }
-        const idx = pos * 4;
-        if (minDist <= checkR) {
-          data[idx + 3] = Math.round(255 * (1 - minDist / (checkR + 1)));
-        } else {
-          data[idx + 3] = 0;
-        }
+async function loadImageWithRetry(item, maxRetries = 2) {
+  for (let attempt = 0; attempt < maxRetries; attempt++) {
+    try {
+      console.log(`[${attempt + 1}/${maxRetries}] Loading: ${item}`);
+      const img = await loadSingleImage(item);
+      console.log(`Loaded: ${item}`);
+      return img;
+    } catch (err) {
+      console.warn(`Failed (attempt ${attempt + 1}): ${item}`, err.message);
+      if (attempt === maxRetries - 1) {
+        console.warn(`Fallback for: ${item}`);
+        return createFallbackImage(item);
       }
+      // リトライ前に少し待つ
+      await new Promise(r => setTimeout(r, 2000));
     }
   }
-
-  ctx.putImageData(imageData, 0, 0);
-
-  const resultImg = new Image();
-  resultImg.src = canvas.toDataURL('image/png');
-  return new Promise(resolve => {
-    resultImg.onload = () => resolve(resultImg);
-  });
 }
 
 /**
- * 画像をリサイズしてImage要素として返す（背景除去なし用）
+ * 8枚すべてを並列読み込み
+ * @param {string[]} items - 8つのアイテム名
+ * @param {function} onProgress - 進捗コールバック (index, status) => void
+ * @returns {HTMLImageElement[]} - 8枚の画像配列
  */
-function resizeToImage(img, size = 512) {
+async function loadAllIllustrations(items, onProgress) {
+  const promises = items.map(async (item, index) => {
+    if (onProgress) onProgress(index, 'loading');
+    const img = await loadImageWithRetry(item);
+    if (onProgress) onProgress(index, 'done');
+    return img;
+  });
+  return Promise.all(promises);
+}
+
+/**
+ * フォールバック画像（Pollinations失敗時）
+ */
+function createFallbackImage(item) {
+  const size = 512;
   const canvas = document.createElement('canvas');
   canvas.width = size;
   canvas.height = size;
   const ctx = canvas.getContext('2d');
-  ctx.drawImage(img, 0, 0, size, size);
-  const resultImg = new Image();
-  resultImg.src = canvas.toDataURL('image/png');
-  return new Promise(resolve => {
-    resultImg.onload = () => resolve(resultImg);
-  });
-}
 
-function createFallbackImage(item) {
-  const canvas = document.createElement('canvas');
-  canvas.width = 512;
-  canvas.height = 512;
-  const ctx = canvas.getContext('2d');
-
-  const colors = [
-    '#FFB3BA', '#BAFFC9', '#BAE1FF', '#FFFFBA',
-    '#E8BAFF', '#FFDFBA', '#C9BAFF', '#BAFFEE'
+  const palettes = [
+    { bg: '#FFE5E5', fg: '#D4636F' },
+    { bg: '#E5F0FF', fg: '#5B8FD4' },
+    { bg: '#FFF3E0', fg: '#D4955B' },
+    { bg: '#E8F5E9', fg: '#5BAD6D' },
+    { bg: '#F3E5F5', fg: '#A35BB5' },
+    { bg: '#FFF8E1', fg: '#C9A83E' },
+    { bg: '#E0F7FA', fg: '#4BA3B5' },
+    { bg: '#FCE4EC', fg: '#C95B83' },
   ];
-  const bg = colors[Math.floor(Math.random() * colors.length)];
+  const p = palettes[Math.floor(Math.random() * palettes.length)];
 
-  ctx.save();
+  // 角丸背景
+  const r = 40;
+  ctx.fillStyle = p.bg;
   ctx.beginPath();
-  ctx.arc(256, 256, 200, 0, Math.PI * 2);
-  ctx.fillStyle = bg;
-  ctx.globalAlpha = 0.9;
-  ctx.fill();
-  ctx.globalAlpha = 1;
-  ctx.restore();
+  ctx.moveTo(r, 0); ctx.lineTo(size - r, 0); ctx.quadraticCurveTo(size, 0, size, r);
+  ctx.lineTo(size, size - r); ctx.quadraticCurveTo(size, size, size - r, size);
+  ctx.lineTo(r, size); ctx.quadraticCurveTo(0, size, 0, size - r);
+  ctx.lineTo(0, r); ctx.quadraticCurveTo(0, 0, r, 0);
+  ctx.closePath(); ctx.fill();
 
-  ctx.fillStyle = '#4a3728';
-  ctx.font = "bold 52px 'Zen Maru Gothic', sans-serif";
+  // ドット装飾
+  ctx.fillStyle = p.fg + '20';
+  for (let i = 0; i < 15; i++) {
+    ctx.beginPath();
+    ctx.arc(Math.random() * size, Math.random() * size, Math.random() * 25 + 5, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  // テキスト
+  ctx.fillStyle = p.fg;
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
-  ctx.fillText(item, 256, 256);
+  let fontSize = 48;
+  ctx.font = `bold ${fontSize}px "Zen Maru Gothic", sans-serif`;
+  while (ctx.measureText(item).width > size - 60 && fontSize > 20) {
+    fontSize -= 4;
+    ctx.font = `bold ${fontSize}px "Zen Maru Gothic", sans-serif`;
+  }
+  ctx.fillText(item, size / 2, size / 2);
 
   const img = new Image();
-  img.src = canvas.toDataURL('image/png');
-  return new Promise(resolve => { img.onload = () => resolve(img); });
+  img.src = canvas.toDataURL();
+  return img;
 }
 
-async function generateOne(item, onProgress) {
-  if (onProgress) onProgress('loading');
-  try {
-    const url = buildUrl(item);
-    const img = await loadImage(url);
-
-    // 背景除去を試みる（tainted canvasならSecurityError）
-    try {
-      const cut = await removeWhiteBackground(img);
-      if (onProgress) onProgress('done');
-      return cut;
-    } catch (secErr) {
-      console.log(`[ImageGenerator] Canvas tainted for "${item}", using without bg removal`);
-      const resized = await resizeToImage(img);
-      if (onProgress) onProgress('done');
-      return resized;
-    }
-  } catch (e) {
-    // リトライ
-    try {
-      const url2 = buildUrl(item);
-      const img = await loadImage(url2);
-      try {
-        const cut = await removeWhiteBackground(img);
-        if (onProgress) onProgress('done');
-        return cut;
-      } catch (secErr) {
-        const resized = await resizeToImage(img);
-        if (onProgress) onProgress('done');
-        return resized;
-      }
-    } catch (e2) {
-      console.error(`[ImageGenerator] Failed for "${item}":`, e2);
-      if (onProgress) onProgress('error');
-      return createFallbackImage(item);
-    }
-  }
-}
-
-async function generateAll(items, onItemProgress) {
-  const results = await Promise.all(
-    items.map((item, i) =>
-      generateOne(item, (status) => {
-        if (onItemProgress) onItemProgress(i, status);
-      })
-    )
-  );
-  return results;
-}
-
-const ImageGenerator = { generateAll, generateOne, createFallbackImage };
+const ImageGenerator = { loadAllIllustrations, loadImageWithRetry, createFallbackImage };
 export default ImageGenerator;
 
 window.ImageGenerator = ImageGenerator;

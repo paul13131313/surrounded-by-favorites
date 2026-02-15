@@ -1,193 +1,131 @@
-/* ========================================
-   コラージュ合成 — 密集レイアウト (Canvas API)
-   「好きなものに囲まれている」= ぎゅっと中央に密集
-   ======================================== */
+/**
+ * collage-composer.js
+ * 1080x1080pxのコラージュ画像を合成する
+ *
+ * テキスト描画はこのファイル内でのみ行う
+ * 他のファイルからテキスト描画を呼ばないこと
+ */
 
-// roundRect polyfill
-if (!CanvasRenderingContext2D.prototype.roundRect) {
-  CanvasRenderingContext2D.prototype.roundRect = function (x, y, w, h, r) {
-    const radius = typeof r === 'number' ? r : (Array.isArray(r) ? r[0] : 0);
-    this.moveTo(x + radius, y);
-    this.arcTo(x + w, y, x + w, y + h, radius);
-    this.arcTo(x + w, y + h, x, y + h, radius);
-    this.arcTo(x, y + h, x, y, radius);
-    this.arcTo(x, y, x + w, y, radius);
-    this.closePath();
-  };
-}
+// ===== 定数 =====
+const CANVAS_SIZE = 1080;
+const CENTER_X = CANVAS_SIZE / 2;       // 540
+const CENTER_Y = CANVAS_SIZE / 2 - 40;  // 500（タイトル分やや上）
+const FACE_RADIUS = 140;                // 顔の半径（直径280px）
+const ORBIT_RADIUS = 330;               // イラスト配置の円周半径
+const ILLUST_SIZE = 170;                // 各イラストの表示サイズ
+const START_ANGLE = -Math.PI / 2;       // 12時方向から開始
 
-const SIZE = 1080;
-const CX = SIZE / 2;
-const CY = SIZE / 2;
+// 暖色系グラデーション候補
+const GRADIENTS = [
+  { from: '#FFF5F5', to: '#FFE8E0' },
+  { from: '#FFF8F0', to: '#FFE5F0' },
+  { from: '#FFF5E6', to: '#FFE8F5' },
+  { from: '#FFF0F5', to: '#F0E8FF' },
+  { from: '#FFFFF0', to: '#FFE8E8' },
+];
 
-/* ─── 背景 ─── */
-function drawBackground(ctx) {
-  const palettes = [
-    ['#FFF8F0', '#FFEEE5', '#FFF5F0'],
-    ['#F0F5FF', '#E8ECFF', '#F5F0FF'],
-    ['#FFFFF0', '#FFF5E5', '#FFF8EE'],
-    ['#F5FFF0', '#EEFFF0', '#F8FFF5'],
-  ];
-  const pal = palettes[Math.floor(Math.random() * palettes.length)];
-  const grad = ctx.createRadialGradient(CX, CY, 0, CX, CY, SIZE * 0.75);
-  grad.addColorStop(0, pal[0]);
-  grad.addColorStop(0.6, pal[1]);
-  grad.addColorStop(1, pal[2]);
-  ctx.fillStyle = grad;
-  ctx.fillRect(0, 0, SIZE, SIZE);
-}
+/**
+ * メイン合成関数
+ * @param {HTMLCanvasElement} targetCanvas - 描画先Canvas（DOM上のもの）
+ * @param {HTMLCanvasElement|HTMLImageElement} faceImage - 切り抜き済み顔画像
+ * @param {HTMLImageElement[]} illustrations - 8枚のイラスト
+ * @param {string[]} items - 8つのアイテム名
+ */
+function compose(targetCanvas, faceImage, illustrations, items) {
+  targetCanvas.width = CANVAS_SIZE;
+  targetCanvas.height = CANVAS_SIZE;
+  const ctx = targetCanvas.getContext('2d');
 
-/* ─── 密集レイアウト生成 ─── */
-function generateLayout(personH) {
-  const baseRadius = Math.max(personH * 0.42, 220);
+  // ===== 1. 背景 =====
+  const grad = GRADIENTS[Math.floor(Math.random() * GRADIENTS.length)];
+  const gradient = ctx.createLinearGradient(0, 0, CANVAS_SIZE, CANVAS_SIZE);
+  gradient.addColorStop(0, grad.from);
+  gradient.addColorStop(1, grad.to);
+  ctx.fillStyle = gradient;
+  ctx.fillRect(0, 0, CANVAS_SIZE, CANVAS_SIZE);
 
-  const positions = [];
+  // ===== 2. イラスト8枚＋アイテム名テキスト =====
   for (let i = 0; i < 8; i++) {
-    const baseAngle = (i / 8) * Math.PI * 2 - Math.PI / 2;
-    const angleJitter = (Math.random() - 0.5) * 0.35;
-    const angle = baseAngle + angleJitter;
+    const angle = START_ANGLE + (i * Math.PI * 2) / 8;
+    const ix = CENTER_X + Math.cos(angle) * ORBIT_RADIUS;
+    const iy = CENTER_Y + Math.sin(angle) * ORBIT_RADIUS;
 
-    const radiusJitter = (Math.random() - 0.5) * 80;
-    const r = baseRadius + radiusJitter;
+    // --- イラスト描画（角丸＋影）---
+    ctx.save();
+    ctx.shadowColor = 'rgba(0,0,0,0.1)';
+    ctx.shadowBlur = 12;
+    ctx.shadowOffsetY = 4;
 
-    const sizes = [240, 200, 260, 180, 250, 210, 230, 195];
-    const size = sizes[i] + (Math.random() - 0.5) * 30;
+    const half = ILLUST_SIZE / 2;
+    const rr = 16; // 角丸半径
+    const lx = ix - half;
+    const ly = iy - half;
 
-    const rotation = (Math.random() - 0.5) * 0.5;
+    // 角丸パスを作成
+    ctx.beginPath();
+    ctx.moveTo(lx + rr, ly);
+    ctx.lineTo(lx + ILLUST_SIZE - rr, ly);
+    ctx.quadraticCurveTo(lx + ILLUST_SIZE, ly, lx + ILLUST_SIZE, ly + rr);
+    ctx.lineTo(lx + ILLUST_SIZE, ly + ILLUST_SIZE - rr);
+    ctx.quadraticCurveTo(lx + ILLUST_SIZE, ly + ILLUST_SIZE, lx + ILLUST_SIZE - rr, ly + ILLUST_SIZE);
+    ctx.lineTo(lx + rr, ly + ILLUST_SIZE);
+    ctx.quadraticCurveTo(lx, ly + ILLUST_SIZE, lx, ly + ILLUST_SIZE - rr);
+    ctx.lineTo(lx, ly + rr);
+    ctx.quadraticCurveTo(lx, ly, lx + rr, ly);
+    ctx.closePath();
 
-    positions.push({
-      x: CX + Math.cos(angle) * r,
-      y: CY + Math.sin(angle) * r,
-      size,
-      rotation,
-      zIndex: i,
-    });
+    ctx.clip();
+    if (illustrations[i]) {
+      ctx.drawImage(illustrations[i], lx, ly, ILLUST_SIZE, ILLUST_SIZE);
+    }
+    ctx.restore();
+
+    // --- アイテム名テキスト（ここで1回だけ描画）---
+    ctx.save();
+    ctx.font = '600 15px "Zen Maru Gothic", sans-serif';
+    ctx.fillStyle = '#666666';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'top';
+    ctx.fillText(items[i], ix, iy + half + 6);
+    ctx.restore();
   }
 
-  return positions;
-}
-
-/* ─── イラスト1枚描画（切り抜きステッカー風） ─── */
-function drawIllust(ctx, img, layout, label) {
-  if (!img) return;
-  const { x, y, size, rotation } = layout;
-
+  // ===== 3. 顔画像（イラストの上に配置）=====
   ctx.save();
-  ctx.translate(x, y);
-  ctx.rotate(rotation);
 
-  // 軽いドロップシャドウ
-  ctx.shadowColor = 'rgba(0,0,0,0.15)';
-  ctx.shadowBlur = 10;
-  ctx.shadowOffsetX = 2;
-  ctx.shadowOffsetY = 3;
-
-  ctx.drawImage(img, -size / 2, -size / 2, size, size);
-
-  // シャドウリセット
-  ctx.shadowColor = 'transparent';
-  ctx.shadowBlur = 0;
-
-  // ラベル（小さく控えめに）
-  ctx.fillStyle = 'rgba(255,255,255,0.75)';
-  ctx.font = `bold ${Math.round(size * 0.08)}px 'Zen Maru Gothic', sans-serif`;
-  ctx.textAlign = 'center';
-  const textW = ctx.measureText(label).width + 12;
+  // 白縁＋影
+  ctx.shadowColor = 'rgba(0,0,0,0.18)';
+  ctx.shadowBlur = 24;
+  ctx.shadowOffsetY = 6;
   ctx.beginPath();
-  ctx.roundRect(-textW / 2, size / 2 - 8, textW, 18, 9);
+  ctx.arc(CENTER_X, CENTER_Y, FACE_RADIUS + 6, 0, Math.PI * 2);
+  ctx.fillStyle = '#FFFFFF';
   ctx.fill();
 
-  ctx.fillStyle = '#4a3728';
-  ctx.font = `bold ${Math.round(size * 0.08)}px 'Zen Maru Gothic', sans-serif`;
-  ctx.fillText(label, 0, size / 2 + 5);
-
-  ctx.restore();
-}
-
-/* ─── 人物描画（セグメンテーション済み＝背景透明） ─── */
-function drawPerson(ctx, personCanvas) {
-  const maxH = 450;
-  const ratio = personCanvas.width / personCanvas.height;
-  let drawH = Math.min(maxH, personCanvas.height);
-  let drawW = drawH * ratio;
-
-  if (drawW > 400) {
-    drawW = 400;
-    drawH = drawW / ratio;
-  }
-
-  ctx.save();
-
-  // ドロップシャドウ（人物が浮いて見える効果）
-  ctx.shadowColor = 'rgba(0,0,0,0.2)';
-  ctx.shadowBlur = 25;
-  ctx.shadowOffsetX = 0;
-  ctx.shadowOffsetY = 6;
-
+  // 顔画像を円形クリップ
+  ctx.shadowColor = 'transparent';
+  ctx.beginPath();
+  ctx.arc(CENTER_X, CENTER_Y, FACE_RADIUS, 0, Math.PI * 2);
+  ctx.clip();
   ctx.drawImage(
-    personCanvas,
-    CX - drawW / 2, CY - drawH / 2,
-    drawW, drawH
+    faceImage,
+    CENTER_X - FACE_RADIUS,
+    CENTER_Y - FACE_RADIUS,
+    FACE_RADIUS * 2,
+    FACE_RADIUS * 2
   );
   ctx.restore();
 
-  return { drawW, drawH };
-}
-
-/* ─── タイトル ─── */
-function drawTitle(ctx) {
-  const y = SIZE - 45;
+  // ===== 4. タイトルテキスト（1回だけ）=====
   ctx.save();
-  ctx.font = "bold 24px 'Zen Maru Gothic', sans-serif";
+  ctx.font = '700 26px "Zen Maru Gothic", sans-serif';
+  ctx.fillStyle = '#E07070';
   ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-
-  ctx.fillStyle = 'rgba(255,255,255,0.65)';
-  const tw = ctx.measureText('好きなものに囲まれたい').width + 40;
-  ctx.beginPath();
-  ctx.roundRect(CX - tw / 2, y - 16, tw, 32, 16);
-  ctx.fill();
-
-  ctx.fillStyle = '#d4537a';
-  ctx.fillText('好きなものに囲まれたい', CX, y);
+  ctx.textBaseline = 'bottom';
+  ctx.fillText('好きなものに囲まれたい', CENTER_X, CANVAS_SIZE - 35);
   ctx.restore();
-}
 
-/* ─── メイン合成 ─── */
-function compose(canvas, personCanvas, illustImages, items) {
-  canvas.width = SIZE;
-  canvas.height = SIZE;
-  const ctx = canvas.getContext('2d');
-
-  // 1. 背景
-  drawBackground(ctx);
-
-  // 2. 人物の高さを先に計算してレイアウトに使う
-  const ratio = personCanvas.width / personCanvas.height;
-  let personH = Math.min(450, personCanvas.height);
-  let personW = personH * ratio;
-  if (personW > 400) { personW = 400; personH = personW / ratio; }
-
-  // 3. 密集レイアウト生成
-  const layout = generateLayout(personH);
-
-  // 4. 後ろのイラスト（0〜3番）
-  for (let i = 0; i < 4; i++) {
-    drawIllust(ctx, illustImages[i], layout[i], items[i]);
-  }
-
-  // 5. 人物（中央・主役）
-  drawPerson(ctx, personCanvas);
-
-  // 6. 前面のイラスト（4〜7番）— 人物の前にかぶさる
-  for (let i = 4; i < 8; i++) {
-    drawIllust(ctx, illustImages[i], layout[i], items[i]);
-  }
-
-  // 7. タイトル
-  drawTitle(ctx);
-
-  return canvas;
+  return targetCanvas;
 }
 
 const CollageComposer = { compose };
